@@ -1,0 +1,5 @@
+{
+  "name": "PA Dev Resource Manager",
+  "description": "A specialized tool for dev team leaders to manage project assignments and time slots (Mon-Thu) with automated member notifications.",
+  "requestFramePermissions": ["notifications"]
+}

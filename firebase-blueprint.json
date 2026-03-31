@@ -1,0 +1,54 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and role information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["leader", "member"] }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "Project details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" }
+      },
+      "required": ["id", "name"]
+    },
+    "Slot": {
+      "title": "Slot",
+      "description": "A specific time slot assignment for a member",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "memberId": { "type": "string" },
+        "projectId": { "type": "string" },
+        "day": { "type": "integer", "description": "1=Mon, 2=Tue, 3=Wed, 4=Thu" },
+        "shift": { "type": "string", "enum": ["morning", "afternoon"] },
+        "weekStart": { "type": "string", "format": "date-time", "description": "ISO string for the Monday of the week" }
+      },
+      "required": ["id", "memberId", "projectId", "day", "shift", "weekStart"]
+    }
+  },
+  "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/projects/{projectId}": {
+      "schema": "Project",
+      "description": "Available projects"
+    },
+    "/slots/{slotId}": {
+      "schema": "Slot",
+      "description": "Time slot assignments"
+    }
+  }
+}

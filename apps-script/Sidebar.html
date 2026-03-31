@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <style>
+      body { font-family: 'Inter', sans-serif; background-color: #f1f5f9; padding: 20px; }
+      .timeline-container { background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); border: 1px solid #e2e8f0; overflow: hidden; }
+      .timeline-grid { display: grid; grid-template-columns: 180px repeat(8, 1fr); gap: 1px; background-color: #cbd5e1; }
+      .grid-header { background-color: #0f172a; color: white; font-size: 12px; padding: 12px 8px; text-align: center; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+      .grid-cell { background-color: white; padding: 8px; min-height: 48px; display: flex; align-items: center; justify-content: center; border: 0.5px solid #f1f5f9; }
+      .member-cell { background-color: #f8fafc; font-weight: 600; color: #1e293b; font-size: 13px; padding-left: 16px; justify-content: flex-start; }
+      select { width: 100%; border: 1px solid transparent; background: #f8fafc; cursor: pointer; outline: none; padding: 6px; border-radius: 6px; font-size: 12px; transition: all 0.2s; }
+      select:hover { border-color: #3b82f6; background-color: #eff6ff; }
+      select:focus { border-color: #3b82f6; ring: 2px; ring-color: #93c5fd; }
+      .loading-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.7); backdrop-filter: blur(2px); display: flex; align-items: center; justify-content: center; z-index: 50; }
+      .status-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    </style>
+  </head>
+  <body>
+    <div id="loading" class="loading-overlay">
+      <div class="flex flex-col items-center">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-2"></div>
+        <span class="text-sm font-medium text-slate-600">Đang tải dữ liệu...</span>
+      </div>
+    </div>
+
+    <div class="status-bar">
+      <div>
+        <h1 class="text-xl font-bold text-slate-900">PA Dev Manager - Timeline Dashboard</h1>
+        <p class="text-xs text-slate-500">Quản lý lịch trình trực tiếp trên Google Sheets</p>
+      </div>
+      <div class="flex gap-2">
+        <button onclick="loadData()" class="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 hover:bg-slate-50 rounded-lg text-sm font-medium text-slate-700 transition-colors shadow-sm">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+          Làm mới
+        </button>
+      </div>
+    </div>
+
+    <div id="content" class="timeline-container">
+      <!-- Timeline will be injected here -->
+    </div>
+
+    <script>
+      let appData = null;
+
+      function loadData() {
+        document.getElementById('loading').style.display = 'flex';
+        google.script.run
+          .withSuccessHandler(function(data) {
+            appData = data;
+            renderTimeline();
+            document.getElementById('loading').style.display = 'none';
+          })
+          .getSheetData();
+      }
+
+      function renderTimeline() {
+        const container = document.getElementById('content');
+        let html = '<div class="timeline-grid">';
+        
+        // Headers
+        html += '<div class="grid-header">Member</div>';
+        const days = ['M-AM', 'M-PM', 'T-AM', 'T-PM', 'W-AM', 'W-PM', 'T-AM', 'T-PM'];
+        days.forEach(d => html += `<div class="grid-header">${d}</div>`);
+
+        // Rows
+        appData.members.forEach((member, mIdx) => {
+          html += `<div class="grid-cell member-cell truncate">${member}</div>`;
+          
+          for (let dIdx = 0; dIdx < 8; dIdx++) {
+            const currentVal = appData.schedule[mIdx][dIdx] || '';
+            html += `<div class="grid-cell">
+              <select onchange="updateCell(${mIdx}, ${dIdx}, this.value)">
+                <option value=""></option>
+                ${appData.projects.map(p => `<option value="${p}" ${p === currentVal ? 'selected' : ''}>${p}</option>`).join('')}
+              </select>
+            </div>`;
+          }
+        });
+
+        html += '</div>';
+        container.innerHTML = html;
+      }
+
+      function updateCell(mIdx, dIdx, value) {
+        document.getElementById('loading').style.display = 'flex';
+        google.script.run
+          .withSuccessHandler(function() {
+            document.getElementById('loading').style.display = 'none';
+          })
+          .updateCell(mIdx, dIdx, value);
+      }
+
+      // Initial load
+      window.onload = loadData;
+    </script>
+  </body>
+</html>

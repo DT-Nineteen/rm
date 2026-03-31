@@ -1,0 +1,33 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Users can read/write their own profile
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // Teams: any authenticated user can query (needed for invite code lookup)
+    match /teams/{teamId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null && resource.data.ownerId == request.auth.uid;
+
+      // Team members subcollection
+      match /members/{memberId} {
+        allow read: if request.auth != null && exists(/databases/$(database)/documents/teams/$(teamId)/members/$(request.auth.uid));
+        allow write: if request.auth != null;
+      }
+    }
+
+    // Projects: team members can read/write
+    match /projects/{projectId} {
+      allow read, write: if request.auth != null;
+    }
+
+    // Slots: authenticated users can read/write
+    match /slots/{slotId} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
