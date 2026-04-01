@@ -18,7 +18,9 @@ import {
   query,
   where,
   getDoc,
-  getDocs
+  getDocs,
+  arrayUnion,
+  arrayRemove
 } from 'firebase/firestore';
 import {
   startOfWeek,
@@ -61,6 +63,8 @@ import {
   CheckCheck,
   AlertCircle,
   Undo2,
+  Settings,
+  ChevronDown,
 } from 'lucide-react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -82,6 +86,7 @@ interface UserProfile {
   uid: string;
   email: string;
   displayName: string;
+  teamIds?: string[];
 }
 
 interface TeamMember {
@@ -837,8 +842,20 @@ function LoginScreen() {
 }
 
 // --- Team Onboarding Screen (after login, no team yet) ---
-function TeamOnboarding({ profile, onTeamJoined }: { profile: UserProfile; onTeamJoined: () => void }) {
-  const [mode, setMode] = useState<'choose' | 'create' | 'join'>('choose');
+function TeamOnboarding({
+  profile,
+  onTeamJoined,
+  isModal = false,
+  onClose,
+  defaultMode = 'choose',
+}: {
+  profile: UserProfile;
+  onTeamJoined: () => void;
+  isModal?: boolean;
+  onClose?: () => void;
+  defaultMode?: 'choose' | 'create' | 'join';
+}) {
+  const [mode, setMode] = useState<'choose' | 'create' | 'join'>(defaultMode);
   const [teamName, setTeamName] = useState('');
   const [inviteCode, setInviteCode] = useState('');
   const [loading, setLoading] = useState(false);
@@ -867,8 +884,11 @@ function TeamOnboarding({ profile, onTeamJoined }: { profile: UserProfile; onTea
         joinedAt: new Date().toISOString(),
       };
       await setDoc(doc(db, 'teams', teamId, 'members', profile.uid), member);
-      // Save user's current team
-      await setDoc(doc(db, 'users', profile.uid), { ...profile, currentTeamId: teamId });
+      // Add teamId to user's teamIds array and set as active team
+      await setDoc(doc(db, 'users', profile.uid), {
+        currentTeamId: teamId,
+        teamIds: arrayUnion(teamId),
+      }, { merge: true });
       onTeamJoined();
     } catch (err) {
       setError('Tạo team thất bại. Thử lại nhé.');
@@ -893,6 +913,16 @@ function TeamOnboarding({ profile, onTeamJoined }: { profile: UserProfile; onTea
       }
       const teamDoc = snap.docs[0];
       const teamId = teamDoc.id;
+
+      // Check if already a member — prevent overwriting existing role (e.g. leader → member)
+      const existingMemberSnap = await getDoc(doc(db, 'teams', teamId, 'members', profile.uid));
+      if (existingMemberSnap.exists()) {
+        // Already in team — just switch active team
+        await setDoc(doc(db, 'users', profile.uid), { currentTeamId: teamId }, { merge: true });
+        onTeamJoined();
+        return;
+      }
+
       const member: TeamMember = {
         uid: profile.uid,
         email: profile.email,
@@ -901,7 +931,11 @@ function TeamOnboarding({ profile, onTeamJoined }: { profile: UserProfile; onTea
         joinedAt: new Date().toISOString(),
       };
       await setDoc(doc(db, 'teams', teamId, 'members', profile.uid), member);
-      await setDoc(doc(db, 'users', profile.uid), { ...profile, currentTeamId: teamId });
+      // Add teamId to user's teamIds array and set as active team
+      await setDoc(doc(db, 'users', profile.uid), {
+        currentTeamId: teamId,
+        teamIds: arrayUnion(teamId),
+      }, { merge: true });
       onTeamJoined();
     } catch (err) {
       setError('Join team thất bại. Thử lại nhé.');
@@ -910,115 +944,154 @@ function TeamOnboarding({ profile, onTeamJoined }: { profile: UserProfile; onTea
     }
   };
 
+  const cardContent = (
+    <motion.div
+      initial={{ opacity: 0, y: isModal ? 0 : 20, scale: isModal ? 0.97 : 1 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.97 }}
+      className={cn(
+        "bg-white rounded-[32px] shadow-2xl w-full border border-gray-100",
+        isModal ? "p-8 max-w-md relative" : "p-10 max-w-md"
+      )}
+    >
+      {/* Close button for modal mode */}
+      {isModal && onClose && (
+        <button
+          onClick={onClose}
+          className="absolute top-5 right-5 p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-all"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      )}
+
+      <div className="flex items-center gap-3 mb-8">
+        <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200">
+          <Users className="w-6 h-6 text-white" />
+        </div>
+        <div>
+          <h1 className="text-xl font-black text-slate-900">
+            {isModal ? 'Thêm team' : `Xin chào, ${profile.displayName.split(' ')[0]}!`}
+          </h1>
+          <p className="text-slate-500 text-sm">
+            {isModal ? 'Tạo hoặc join thêm một team mới.' : 'Bắt đầu bằng cách tạo hoặc join team.'}
+          </p>
+        </div>
+      </div>
+
+      <AnimatePresence mode="wait">
+        {mode === 'choose' && (
+          <motion.div key="choose" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
+            <button
+              onClick={() => setMode('create')}
+              className="w-full flex items-center gap-4 p-5 rounded-2xl border-2 border-slate-200 hover:border-blue-300 hover:bg-blue-50/30 transition-all group"
+            >
+              <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center group-hover:bg-blue-200 transition-colors">
+                <Plus className="w-6 h-6 text-blue-600" />
+              </div>
+              <div className="text-left">
+                <p className="font-bold text-slate-900">Tạo team mới</p>
+                <p className="text-sm text-slate-500">Bạn là leader, tạo team và mời members.</p>
+              </div>
+            </button>
+            <button
+              onClick={() => setMode('join')}
+              className="w-full flex items-center gap-4 p-5 rounded-2xl border-2 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/30 transition-all group"
+            >
+              <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center group-hover:bg-emerald-200 transition-colors">
+                <LogIn className="w-6 h-6 text-emerald-600" />
+              </div>
+              <div className="text-left">
+                <p className="font-bold text-slate-900">Join team</p>
+                <p className="text-sm text-slate-500">Nhập invite code từ leader của bạn.</p>
+              </div>
+            </button>
+          </motion.div>
+        )}
+
+        {mode === 'create' && (
+          <motion.div key="create" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+            <button onClick={() => setMode('choose')} className="flex items-center gap-1 text-slate-500 text-sm mb-6 hover:text-slate-600 transition-colors">
+              <ChevronLeft className="w-4 h-4" /> Quay lại
+            </button>
+            <h2 className="text-xl font-black text-slate-900 mb-6">Tạo team mới</h2>
+            <form onSubmit={handleCreateTeam} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2 block">Tên team</label>
+                <input
+                  type="text"
+                  value={teamName}
+                  onChange={e => setTeamName(e.target.value)}
+                  placeholder="VD: BSS Dev Team"
+                  className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium"
+                  autoFocus
+                />
+              </div>
+              {error && <p className="text-red-500 text-sm">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading || !teamName.trim()}
+                className="w-full bg-blue-600 text-white py-3.5 rounded-2xl font-bold hover:bg-blue-700 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Đang tạo...' : 'Tạo team'}
+              </button>
+            </form>
+          </motion.div>
+        )}
+
+        {mode === 'join' && (
+          <motion.div key="join" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
+            <button onClick={() => setMode('choose')} className="flex items-center gap-1 text-slate-500 text-sm mb-6 hover:text-slate-600 transition-colors">
+              <ChevronLeft className="w-4 h-4" /> Quay lại
+            </button>
+            <h2 className="text-xl font-black text-slate-900 mb-6">Join team</h2>
+            <form onSubmit={handleJoinTeam} className="space-y-4">
+              <div>
+                <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2 block">Invite Code</label>
+                <input
+                  type="text"
+                  value={inviteCode}
+                  onChange={e => setInviteCode(e.target.value.toUpperCase())}
+                  placeholder="VD: ABC123"
+                  className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-mono font-bold tracking-widest uppercase"
+                  maxLength={6}
+                  autoFocus
+                />
+              </div>
+              {error && <p className="text-red-500 text-sm">{error}</p>}
+              <button
+                type="submit"
+                disabled={loading || inviteCode.length < 6}
+                className="w-full bg-emerald-600 text-white py-3.5 rounded-2xl font-bold hover:bg-emerald-700 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {loading ? 'Đang join...' : 'Join team'}
+              </button>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </motion.div>
+  );
+
+  if (isModal) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+          onClick={onClose}
+        />
+        <div className="relative z-10 w-full max-w-md">
+          {cardContent}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center p-4">
-      <motion.div
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="bg-white p-10 rounded-[32px] shadow-2xl max-w-md w-full border border-gray-100"
-      >
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-12 h-12 bg-blue-600 rounded-2xl flex items-center justify-center shadow-lg shadow-blue-200">
-            <Users className="w-6 h-6 text-white" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black text-slate-900">Xin chào, {profile.displayName.split(' ')[0]}!</h1>
-            <p className="text-slate-500 text-sm">Bắt đầu bằng cách tạo hoặc join team.</p>
-          </div>
-        </div>
-
-        <AnimatePresence mode="wait">
-          {mode === 'choose' && (
-            <motion.div key="choose" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="space-y-3">
-              <button
-                onClick={() => setMode('create')}
-                className="w-full flex items-center gap-4 p-5 rounded-2xl border-2 border-slate-200 hover:border-blue-300 hover:bg-blue-50/30 transition-all group"
-              >
-                <div className="w-12 h-12 bg-blue-50 rounded-xl flex items-center justify-center group-hover:bg-blue-200 transition-colors">
-                  <Plus className="w-6 h-6 text-blue-600" />
-                </div>
-                <div className="text-left">
-                  <p className="font-bold text-slate-900">Tạo team mới</p>
-                  <p className="text-sm text-slate-500">Bạn là leader, tạo team và mời members.</p>
-                </div>
-              </button>
-              <button
-                onClick={() => setMode('join')}
-                className="w-full flex items-center gap-4 p-5 rounded-2xl border-2 border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/30 transition-all group"
-              >
-                <div className="w-12 h-12 bg-emerald-50 rounded-xl flex items-center justify-center group-hover:bg-emerald-200 transition-colors">
-                  <LogIn className="w-6 h-6 text-emerald-600" />
-                </div>
-                <div className="text-left">
-                  <p className="font-bold text-slate-900">Join team</p>
-                  <p className="text-sm text-slate-500">Nhập invite code từ leader của bạn.</p>
-                </div>
-              </button>
-            </motion.div>
-          )}
-
-          {mode === 'create' && (
-            <motion.div key="create" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-              <button onClick={() => setMode('choose')} className="flex items-center gap-1 text-slate-500 text-sm mb-6 hover:text-slate-600 transition-colors">
-                <ChevronLeft className="w-4 h-4" /> Quay lại
-              </button>
-              <h2 className="text-xl font-black text-slate-900 mb-6">Tạo team mới</h2>
-              <form onSubmit={handleCreateTeam} className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2 block">Tên team</label>
-                  <input
-                    type="text"
-                    value={teamName}
-                    onChange={e => setTeamName(e.target.value)}
-                    placeholder="VD: BSS Dev Team"
-                    className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-medium"
-                    autoFocus
-                  />
-                </div>
-                {error && <p className="text-red-500 text-sm">{error}</p>}
-                <button
-                  type="submit"
-                  disabled={loading || !teamName.trim()}
-                  className="w-full bg-blue-600 text-white py-3.5 rounded-2xl font-bold hover:bg-blue-700 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  {loading ? 'Đang tạo...' : 'Tạo team'}
-                </button>
-              </form>
-            </motion.div>
-          )}
-
-          {mode === 'join' && (
-            <motion.div key="join" initial={{ opacity: 0, x: 20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -20 }}>
-              <button onClick={() => setMode('choose')} className="flex items-center gap-1 text-slate-500 text-sm mb-6 hover:text-slate-600 transition-colors">
-                <ChevronLeft className="w-4 h-4" /> Quay lại
-              </button>
-              <h2 className="text-xl font-black text-slate-900 mb-6">Join team</h2>
-              <form onSubmit={handleJoinTeam} className="space-y-4">
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-slate-500 mb-2 block">Invite Code</label>
-                  <input
-                    type="text"
-                    value={inviteCode}
-                    onChange={e => setInviteCode(e.target.value.toUpperCase())}
-                    placeholder="VD: ABC123"
-                    className="w-full px-4 py-3 rounded-xl bg-slate-50 border border-slate-200 focus:outline-none focus:ring-2 focus:ring-emerald-500 text-sm font-mono font-bold tracking-widest uppercase"
-                    maxLength={6}
-                    autoFocus
-                  />
-                </div>
-                {error && <p className="text-red-500 text-sm">{error}</p>}
-                <button
-                  type="submit"
-                  disabled={loading || inviteCode.length < 6}
-                  className="w-full bg-emerald-600 text-white py-3.5 rounded-2xl font-bold hover:bg-emerald-700 transition-all disabled:opacity-70 disabled:cursor-not-allowed"
-                >
-                  {loading ? 'Đang join...' : 'Join team'}
-                </button>
-              </form>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
+      {cardContent}
     </div>
   );
 }
@@ -1035,68 +1108,162 @@ export default function App() {
   const [slots, setSlots] = useState<Slot[]>([]);
   const [currentMonth, setCurrentMonth] = useState(startOfMonth(new Date()));
   const [needsTeam, setNeedsTeam] = useState(false);
+  const [userTeamIds, setUserTeamIds] = useState<string[]>([]);
+  // Ref keeps userTeamIds always fresh inside onSnapshot closures (avoids stale closure)
+  const userTeamIdsRef = useRef<string[]>([]);
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [teamModalMode, setTeamModalMode] = useState<'choose' | 'create' | 'join'>('choose');
 
-  // Auth + profile loading
+  // Safety net: if loading is still true after 6s, force fallback to onboarding
   useEffect(() => {
-    return onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (u) {
-        const userDocRef = doc(db, 'users', u.uid);
-        try {
-          const userDoc = await getDoc(userDocRef);
-          let p: UserProfile & { currentTeamId?: string };
-          if (!userDoc.exists()) {
-            p = { uid: u.uid, email: u.email || '', displayName: u.displayName || 'Anonymous' };
-            await setDoc(userDocRef, p);
-          } else {
-            p = userDoc.data() as UserProfile & { currentTeamId?: string };
-          }
-          setProfile({ uid: p.uid, email: p.email, displayName: p.displayName });
-          if (!p.currentTeamId) {
-            setNeedsTeam(true);
-          }
-        } catch (error) {
-          handleFirestoreError(error, OperationType.GET, `users/${u.uid}`);
-        }
-      } else {
+    if (!loading) return;
+    const t = setTimeout(() => {
+      setLoading(false);
+      setNeedsTeam(true);
+    }, 6000);
+    return () => clearTimeout(t);
+  }, [loading]);
+
+  // Auth + profile loading: single onSnapshot listener as source of truth
+  useEffect(() => {
+    let unsubUser: (() => void) | undefined;
+
+    const unsubAuth = onAuthStateChanged(auth, async (u) => {
+      if (unsubUser) { unsubUser(); unsubUser = undefined; }
+
+      if (!u) {
+        setUser(null);
         setProfile(null);
         setTeam(null);
         setTeamRole(null);
+        setTeamMembers([]);
+        setProjects([]);
+        setSlots([]);
         setNeedsTeam(false);
+        setLoading(false);
+        return;
       }
-      setLoading(false);
+
+      setUser(u);
+      const userDocRef = doc(db, 'users', u.uid);
+
+      try {
+        // Ensure user doc exists
+        const snap = await getDoc(userDocRef);
+        if (!snap.exists()) {
+          await setDoc(userDocRef, {
+            uid: u.uid,
+            email: u.email || '',
+            displayName: u.displayName || 'Anonymous',
+          });
+        }
+      } catch (error) {
+        handleFirestoreError(error, OperationType.GET, `users/${u.uid}`);
+        setLoading(false);
+        return;
+      }
+
+      // Real-time listener on user doc to detect team removal
+      unsubUser = onSnapshot(userDocRef, async (docSnap) => {
+        if (!docSnap.exists()) { setLoading(false); return; }
+
+        const data = docSnap.data() as UserProfile & { currentTeamId?: string; teamIds?: string[] };
+        setProfile({ uid: data.uid, email: data.email, displayName: data.displayName, teamIds: data.teamIds });
+        const freshTeamIds = data.teamIds ?? [];
+        setUserTeamIds(freshTeamIds);
+        userTeamIdsRef.current = freshTeamIds;
+
+        // Resolve which team to actually load — verify membership for currentTeamId,
+        // then fall through stale teamIds until we find a valid one or exhaust all.
+        const allTeamIds: string[] = data.teamIds ?? [];
+        const candidateIds = data.currentTeamId
+          ? [data.currentTeamId, ...allTeamIds.filter(id => id !== data.currentTeamId)]
+          : [...allTeamIds];
+
+        let resolvedTeam: Team | null = null;
+        let resolvedRole: Role | null = null;
+        const staleIds: string[] = [];
+
+        for (const tid of candidateIds) {
+          try {
+            const [tDoc, mDoc] = await Promise.all([
+              getDoc(doc(db, 'teams', tid)),
+              getDoc(doc(db, 'teams', tid, 'members', u.uid)),
+            ]);
+            if (tDoc.exists() && mDoc.exists()) {
+              resolvedTeam = tDoc.data() as Team;
+              resolvedRole = (mDoc.data() as TeamMember).role;
+              break;
+            } else {
+              staleIds.push(tid);
+            }
+          } catch {
+            // Network error on this team — skip, try next
+            staleIds.push(tid);
+          }
+        }
+
+        // Clean up stale teamIds using arrayRemove (safe for concurrent writes)
+        // and update currentTeamId only if it changed
+        const currentTeamChanged = data.currentTeamId !== resolvedTeam?.id;
+        if (staleIds.length > 0 || currentTeamChanged) {
+          try {
+            const updates: Record<string, unknown> = {};
+            // arrayRemove each stale id individually — atomic, no race condition
+            if (staleIds.length > 0) updates.teamIds = arrayRemove(...staleIds);
+            if (currentTeamChanged) updates.currentTeamId = resolvedTeam?.id ?? null;
+            await setDoc(doc(db, 'users', u.uid), updates, { merge: true });
+          } catch { /* best-effort cleanup, continue */ }
+        }
+
+        if (resolvedTeam && resolvedRole) {
+          setTeam(resolvedTeam);
+          setTeamRole(resolvedRole);
+          setNeedsTeam(false);
+        } else {
+          setTeam(null);
+          setTeamRole(null);
+          setTeamMembers([]);
+          setProjects([]);
+          setSlots([]);
+          setNeedsTeam(true);
+        }
+
+        setLoading(false);
+      });
     });
-  }, []);
 
-  // Load team data after profile is set
-  useEffect(() => {
-    if (!user || !profile || needsTeam) return;
-
-    const loadTeam = async () => {
-      const userDoc = await getDoc(doc(db, 'users', user.uid));
-      const currentTeamId = userDoc.data()?.currentTeamId;
-      if (!currentTeamId) { setNeedsTeam(true); return; }
-
-      const teamDoc = await getDoc(doc(db, 'teams', currentTeamId));
-      if (!teamDoc.exists()) { setNeedsTeam(true); return; }
-      setTeam(teamDoc.data() as Team);
-
-      const memberDoc = await getDoc(doc(db, 'teams', currentTeamId, 'members', user.uid));
-      if (memberDoc.exists()) {
-        setTeamRole((memberDoc.data() as TeamMember).role);
-      }
+    return () => {
+      unsubAuth();
+      if (unsubUser) unsubUser();
     };
-    loadTeam();
-  }, [user, profile, needsTeam]);
+  }, []);
 
   // Real-time listeners for team data
   useEffect(() => {
-    if (!team) return;
+    if (!team || !user) return;
 
     const unsubMembers = onSnapshot(
       collection(db, 'teams', team.id, 'members'),
       snap => {
         const members = snap.docs.map(d => d.data() as TeamMember);
+
+        // If current user no longer in members list, clear current team state immediately.
+        // The userDoc onSnapshot will fire next (after leader updates the user doc) and
+        // handle auto-switching to another team or redirecting to onboarding.
+        const stillMember = members.some(m => m.uid === user.uid);
+        if (!stillMember) {
+          setTeam(null);
+          setTeamRole(null);
+          setTeamMembers([]);
+          setProjects([]);
+          setSlots([]);
+          // If user has no other teams, show onboarding immediately instead of
+          // waiting for userDoc onSnapshot — avoids a blank spinner flash.
+          setNeedsTeam(userTeamIdsRef.current.filter(id => id !== team.id).length === 0);
+          return;
+        }
+
         members.sort((a, b) => {
           if (a.role === 'leader' && b.role !== 'leader') return -1;
           if (a.role !== 'leader' && b.role === 'leader') return 1;
@@ -1177,6 +1344,8 @@ export default function App() {
   }), [user, profile, loading, team, teamRole, isLeader]);
 
   const handleTeamJoined = useCallback(() => {
+    // Show loading spinner while onSnapshot picks up the new currentTeamId
+    setLoading(true);
     setNeedsTeam(false);
   }, []);
 
@@ -1195,13 +1364,29 @@ export default function App() {
   // Not logged in
   if (!user) return <LoginScreen />;
 
-  // Logged in but no team
-  if (needsTeam && profile) {
+  // No teams at all (first time user) → show fullscreen onboarding
+  if ((needsTeam || !team) && userTeamIds.length === 0) {
+    if (!profile) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+          <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+        </div>
+      );
+    }
     return <TeamOnboarding profile={profile} onTeamJoined={handleTeamJoined} />;
   }
 
-  // Loading team
-  if (!team || !profile) {
+  // Has teams but currentTeam not loaded yet → spinner while auto-switching
+  if (!team) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  // Profile not yet loaded
+  if (!profile) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="w-10 h-10 border-4 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
@@ -1216,17 +1401,14 @@ export default function App() {
           {/* Header */}
           <header className="bg-white border-b border-gray-100 sticky top-0 z-50">
             <div className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center">
-                  <Calendar className="w-5 h-5 text-white" />
-                </div>
-                <div>
-                  <h1 className="text-base font-black tracking-tight text-slate-900">{team.name}</h1>
-                  <p className="text-[11px] uppercase tracking-widest text-slate-500 font-bold">Team Scheduler</p>
-                </div>
-              </div>
+              {/* Left: Team Switcher (switch between teams) */}
+              <TeamSwitcher
+                currentTeam={team}
+                userTeamIds={userTeamIds}
+                userId={profile.uid}
+              />
 
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
                 {Notification.permission !== 'granted' && (
                   <button
                     onClick={() => Notification.requestPermission()}
@@ -1236,7 +1418,11 @@ export default function App() {
                     <Bell className="w-4 h-4" />
                   </button>
                 )}
-                <div className="flex items-center gap-2 pl-3 border-l border-gray-100">
+                <SettingsMenu
+                  onCreateTeam={() => { setTeamModalMode('create'); setShowTeamModal(true); }}
+                  onJoinTeam={() => { setTeamModalMode('join'); setShowTeamModal(true); }}
+                />
+                <div className="flex items-center gap-2 pl-2 border-l border-gray-100">
                   <div className="w-8 h-8 rounded-full bg-blue-200 flex items-center justify-center text-blue-600 font-bold text-sm">
                     {profile.displayName?.[0] || 'U'}
                   </div>
@@ -1274,12 +1460,224 @@ export default function App() {
                 currentMonth={currentMonth}
                 setCurrentMonth={setCurrentMonth}
                 profile={profile}
+                team={team}
+                teamMembers={teamMembers}
               />
             )}
           </main>
         </div>
+
+        {/* Add team modal */}
+        <AnimatePresence>
+          {showTeamModal && (
+            <TeamOnboarding
+              profile={profile}
+              isModal
+              defaultMode={teamModalMode}
+              onClose={() => setShowTeamModal(false)}
+              onTeamJoined={() => {
+                setShowTeamModal(false);
+                setLoading(true);
+              }}
+            />
+          )}
+        </AnimatePresence>
       </AppContext.Provider>
     </ToastProvider>
+  );
+}
+
+// --- Team Switcher Dropdown (only shown when user has multiple teams) ---
+function TeamSwitcher({
+  currentTeam,
+  userTeamIds,
+  userId,
+}: {
+  currentTeam: Team;
+  userTeamIds: string[];
+  userId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [switching, setSwitching] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const hasMultipleTeams = userTeamIds.length > 1;
+
+  // Reset switching state once the parent has loaded the new team
+  useEffect(() => {
+    setSwitching(false);
+  }, [currentTeam.id]);
+
+  // Load all team names when dropdown opens
+  useEffect(() => {
+    if (!open || !hasMultipleTeams) return;
+    const fetchTeams = async () => {
+      const docs = await Promise.all(
+        userTeamIds.map(id => getDoc(doc(db, 'teams', id)))
+      );
+      setTeams(docs.filter(d => d.exists()).map(d => d.data() as Team));
+    };
+    fetchTeams();
+  }, [open, userTeamIds, hasMultipleTeams]);
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const handleSwitch = async (teamId: string) => {
+    if (teamId === currentTeam.id || switching) return;
+    setSwitching(true);
+    setOpen(false);
+    try {
+      await setDoc(doc(db, 'users', userId), { currentTeamId: teamId }, { merge: true });
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, `users/${userId}`);
+      setSwitching(false);
+    }
+  };
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => hasMultipleTeams && setOpen(v => !v)}
+        className={cn(
+          "flex items-center gap-2 rounded-xl px-3 py-2 transition-all",
+          hasMultipleTeams && "hover:bg-slate-100 active:scale-95 cursor-pointer",
+          !hasMultipleTeams && "cursor-default",
+          open && "bg-slate-100"
+        )}
+      >
+        <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center flex-shrink-0">
+          <Calendar className="w-4 h-4 text-white" />
+        </div>
+        <div className="text-left">
+          <div className="flex items-center gap-1">
+            <h1 className="text-sm font-black tracking-tight text-slate-900 leading-tight">
+              {switching ? 'Đang chuyển...' : currentTeam.name}
+            </h1>
+            {hasMultipleTeams && (
+              <ChevronDown className={cn("w-3.5 h-3.5 text-slate-400 transition-transform", open && "rotate-180")} />
+            )}
+          </div>
+          <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold leading-tight">Team Scheduler</p>
+        </div>
+      </button>
+
+      <AnimatePresence>
+        {open && hasMultipleTeams && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.97 }}
+            transition={{ duration: 0.15 }}
+            className="absolute top-full left-0 mt-2 w-64 bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden z-50"
+          >
+            <div className="p-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2 py-1.5">Chuyển team</p>
+              {teams.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => handleSwitch(t.id)}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all",
+                    t.id === currentTeam.id
+                      ? "bg-blue-50 text-blue-700"
+                      : "hover:bg-slate-50 text-slate-700"
+                  )}
+                >
+                  <div className={cn(
+                    "w-7 h-7 rounded-lg flex items-center justify-center text-xs font-black flex-shrink-0",
+                    t.id === currentTeam.id ? "bg-blue-600 text-white" : "bg-slate-200 text-slate-600"
+                  )}>
+                    {t.name[0].toUpperCase()}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-bold truncate">{t.name}</p>
+                  </div>
+                  {t.id === currentTeam.id && (
+                    <CheckCircle2 className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                  )}
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+// --- Settings Menu (create/join team) ---
+function SettingsMenu({
+  onCreateTeam,
+  onJoinTeam,
+}: {
+  onCreateTeam: () => void;
+  onJoinTeam: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        className={cn(
+          "p-2 rounded-lg text-slate-500 hover:text-slate-700 hover:bg-slate-100 transition-all",
+          open && "bg-slate-100 text-slate-700"
+        )}
+        title="Cài đặt"
+      >
+        <Settings className="w-4 h-4" />
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, scale: 0.97 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -8, scale: 0.97 }}
+            transition={{ duration: 0.15 }}
+            className="absolute top-full right-0 mt-2 w-52 bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden z-50"
+          >
+            <div className="p-2">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 px-2 py-1.5">Team</p>
+              <button
+                onClick={() => { setOpen(false); onCreateTeam(); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-slate-50 transition-all text-slate-700"
+              >
+                <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center flex-shrink-0">
+                  <Plus className="w-3.5 h-3.5 text-blue-600" />
+                </div>
+                <p className="text-sm font-bold">Tạo team mới</p>
+              </button>
+              <button
+                onClick={() => { setOpen(false); onJoinTeam(); }}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-left hover:bg-slate-50 transition-all text-slate-700"
+              >
+                <div className="w-7 h-7 rounded-lg bg-emerald-50 flex items-center justify-center flex-shrink-0">
+                  <LogIn className="w-3.5 h-3.5 text-emerald-600" />
+                </div>
+                <p className="text-sm font-bold">Join team</p>
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -1324,6 +1722,44 @@ function LeaderDashboard({ team, projects, members, slots, currentMonth, setCurr
     } catch (error) {
       handleFirestoreError(error, OperationType.DELETE, `projects/${id}`);
     }
+  };
+
+  const handleRemoveMember = async (memberId: string) => {
+    if (!window.confirm('Are you sure you want to remove this member? All their data will be deleted.')) return;
+
+    // Step 1: Remove from team — this is the critical step, must succeed
+    try {
+      await deleteDoc(doc(db, 'teams', team.id, 'members', memberId));
+    } catch (error) {
+      handleFirestoreError(error, OperationType.DELETE, `teams/${team.id}/members/${memberId}`);
+      return;
+    }
+
+    // Step 2: Update member's user doc (best-effort — don't block on failure)
+    try {
+      const userDocRef = doc(db, 'users', memberId);
+      const userSnap = await getDoc(userDocRef);
+      const userData = userSnap.data() as (UserProfile & { currentTeamId?: string; teamIds?: string[] }) | undefined;
+      const remainingTeamIds = (userData?.teamIds ?? []).filter(id => id !== team.id);
+      const isViewingThisTeam = userData?.currentTeamId === team.id;
+      await setDoc(userDocRef, {
+        teamIds: arrayRemove(team.id),
+        ...(isViewingThisTeam && {
+          currentTeamId: remainingTeamIds.length > 0 ? remainingTeamIds[0] : null,
+        }),
+      }, { merge: true });
+    } catch { /* best-effort: member's onSnapshot will self-heal via stale-id cleanup */ }
+
+    // Step 3: Clear all slots for this member in this team (best-effort)
+    try {
+      const q = query(
+        collection(db, 'slots'),
+        where('teamId', '==', team.id),
+        where('memberId', '==', memberId)
+      );
+      const snap = await getDocs(q);
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+    } catch { /* best-effort */ }
   };
 
   return (
@@ -1547,12 +1983,24 @@ function LeaderDashboard({ team, projects, members, slots, currentMonth, setCurr
                         <p className="text-xs text-slate-500">{m.email}</p>
                       </div>
                     </div>
-                    <div className={cn(
-                      "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase",
-                      m.role === 'leader' ? "bg-blue-50 text-blue-600" : "bg-slate-200 text-slate-500"
-                    )}>
-                      {m.role === 'leader' && <Shield className="w-3 h-3" />}
-                      {m.role}
+                    <div className="flex items-center gap-3">
+                      <div className={cn(
+                        "flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold uppercase",
+                        m.role === 'leader' ? "bg-blue-50 text-blue-600" : "bg-slate-200 text-slate-500"
+                      )}>
+                        {m.role === 'leader' && <Shield className="w-3 h-3" />}
+                        {m.role}
+                      </div>
+
+                      {m.role !== 'leader' && (
+                        <button
+                          onClick={() => handleRemoveMember(m.uid)}
+                          className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
+                          title="Remove member"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -1663,13 +2111,16 @@ function TimeSlotGrid({ projects, members, allMembers, slots, currentMonth, team
 }
 
 // --- Member Dashboard ---
-function MemberDashboard({ projects, slots, currentMonth, setCurrentMonth, profile }: {
+function MemberDashboard({ projects, slots, currentMonth, setCurrentMonth, profile, team, teamMembers }: {
   projects: Project[];
   slots: Slot[];
   currentMonth: Date;
   setCurrentMonth: (d: Date) => void;
   profile: UserProfile;
+  team: Team;
+  teamMembers: TeamMember[];
 }) {
+  const leader = teamMembers.find(m => m.role === 'leader');
   const [viewMode, setViewMode] = useState<'calendar' | 'list'>('calendar');
   const monthStart = startOfMonth(currentMonth);
   const monthEnd = endOfMonth(currentMonth);
@@ -1716,11 +2167,27 @@ function MemberDashboard({ projects, slots, currentMonth, setCurrentMonth, profi
         </div>
       </div>
 
-      <div>
-        <h1 className="text-3xl font-black text-slate-900 tracking-tight">
-          My <span className="text-blue-600">Schedule</span>
-        </h1>
-        <p className="text-slate-500 font-medium mt-1 text-sm">Lịch phân công dự án của bạn trong tháng này.</p>
+      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">
+            My <span className="text-blue-600">Schedule</span>
+          </h1>
+          <p className="text-slate-500 font-medium mt-1 text-sm">Lịch phân công dự án của bạn trong tháng này.</p>
+        </div>
+
+        {/* Leader info chip */}
+        {leader && (
+          <div className="flex items-center gap-2.5 px-4 py-2.5 bg-white border border-slate-200 rounded-2xl shadow-sm shrink-0">
+            <div className="w-7 h-7 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-black shrink-0">
+              {leader.displayName[0]}
+            </div>
+            <div className="leading-tight">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400">Leader · {team.name}</p>
+              <p className="text-sm font-black text-slate-900">{leader.displayName}</p>
+            </div>
+            <Shield className="w-3.5 h-3.5 text-blue-500 shrink-0 ml-1" />
+          </div>
+        )}
       </div>
 
       {viewMode === 'calendar' ? (
