@@ -1825,9 +1825,8 @@ function LeaderDashboard({ team, projects, members, slots, currentMonth, setCurr
             <div className="flex items-center gap-3 flex-wrap">
               <span className="text-xs font-bold uppercase tracking-widest text-slate-500">Xem lịch của:</span>
               <div className="flex items-center gap-2 flex-wrap">
-                {selectableMembers.map((m, i) => {
+                {selectableMembers.map((m) => {
                   const isMe = m.uid === profile.uid;
-                  const color = getMemberColor(i);
                   const isSelected = viewingMemberId === m.uid;
                   return (
                     <button
@@ -1841,8 +1840,10 @@ function LeaderDashboard({ team, projects, members, slots, currentMonth, setCurr
                       )}
                     >
                       <div className={cn(
-                        "w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black text-white",
-                        color.bg, isSelected && "ring-1 ring-white/50"
+                        "w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-black text-white shadow-sm transition-all",
+                        isSelected
+                          ? "bg-gradient-to-br from-red-700 via-red-500 to-rose-900 ring-2 ring-red-200 scale-105 shadow-md"
+                          : "bg-gradient-to-br from-indigo-500 via-blue-500 to-cyan-400"
                       )}>
                         {m.displayName[0]}
                       </div>
